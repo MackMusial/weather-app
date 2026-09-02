@@ -38,7 +38,7 @@ const els = {
   dateLabel: document.getElementById("date-label"),
   allday: document.getElementById("allday"),
   gcalBtn: document.getElementById("gcal-btn"),
-  unitBtn: document.getElementById("unit-btn"),
+  unitToggle: document.getElementById("unit-toggle"),
   cityForm: document.getElementById("city-form"),
   cityInput: document.getElementById("city-input"),
   geoBtn: document.getElementById("geo-btn"),
@@ -303,7 +303,7 @@ function normalizeEvent(ev) {
 function render({ scroll = false } = {}) {
   els.dateLabel.textContent = fmtDayLabel();
   els.location.textContent = state.location.name;
-  els.unitBtn.textContent = state.unit === "celsius" ? "°F" : "°C";
+  els.unitToggle.dataset.unit = state.unit; // slides the thumb to the active side
 
   // all-day events
   const allDay = state.events.filter((e) => e.allDay);
@@ -436,8 +436,10 @@ els.gcalBtn.addEventListener("click", () => {
   else connectCalendar();
 });
 
-els.unitBtn.addEventListener("click", async () => {
-  state.unit = state.unit === "celsius" ? "fahrenheit" : "celsius";
+els.unitToggle.addEventListener("click", async (e) => {
+  const opt = e.target.closest(".unit-opt");
+  if (!opt || opt.dataset.unit === state.unit) return;
+  state.unit = opt.dataset.unit;
   try {
     localStorage.setItem(UNIT_KEY, state.unit);
   } catch (e) {}

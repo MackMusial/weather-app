@@ -27,7 +27,11 @@
         <button id="geo-btn" class="btn btn-ghost" type="button" title="Use my location">📍</button>
       </form>
 
-      <button id="unit-btn" class="btn btn-ghost" type="button" title="Switch °C / °F">°F</button>
+      <div id="unit-toggle" class="unit-toggle" data-unit="celsius" role="group" aria-label="Temperature unit">
+        <span class="unit-thumb" aria-hidden="true"></span>
+        <button class="unit-opt" type="button" data-unit="celsius">°C</button>
+        <button class="unit-opt" type="button" data-unit="fahrenheit">°F</button>
+      </div>
 
       <div class="date-nav">
         <button id="prev-day" class="btn btn-ghost" type="button" aria-label="Previous day">‹</button>
