@@ -42,6 +42,16 @@ h1 {
   margin: 0;
 }
 
+.location {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.location::before {
+  content: "📍 ";
+}
+
 .controls {
   display: flex;
   flex-wrap: wrap;

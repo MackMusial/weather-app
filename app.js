@@ -22,6 +22,7 @@ const state = {
 const els = {
   rows: document.getElementById("rows"),
   status: document.getElementById("status"),
+  location: document.getElementById("location"),
   dateLabel: document.getElementById("date-label"),
   allday: document.getElementById("allday"),
   gcalBtn: document.getElementById("gcal-btn"),
@@ -287,6 +288,7 @@ function normalizeEvent(ev) {
 
 function render() {
   els.dateLabel.textContent = fmtDayLabel();
+  els.location.textContent = state.location.name;
 
   // all-day events
   const allDay = state.events.filter((e) => e.allDay);
