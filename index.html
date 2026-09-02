@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1b3a" />
+  <title>Weather + Calendar</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="title-row">
+      <h1>Weather + Calendar</h1>
+      <button id="gcal-btn" class="btn" type="button">Connect Google Calendar</button>
+    </div>
+
+    <div class="controls">
+      <form id="city-form" class="city-form">
+        <input id="city-input" type="text" placeholder="Search a city…" autocomplete="off" />
+        <button class="btn" type="submit">Go</button>
+        <button id="geo-btn" class="btn btn-ghost" type="button" title="Use my location">📍</button>
+      </form>
+
+      <div class="date-nav">
+        <button id="prev-day" class="btn btn-ghost" type="button" aria-label="Previous day">‹</button>
+        <span id="date-label">Today</span>
+        <button id="next-day" class="btn btn-ghost" type="button" aria-label="Next day">›</button>
+      </div>
+    </div>
+
+    <p id="status" class="status" role="status"></p>
+    <div id="allday" class="allday" hidden></div>
+  </header>
+
+  <main>
+    <div class="grid-head">
+      <span>Time</span>
+      <span>Weather</span>
+      <span>Calendar</span>
+    </div>
+    <ol id="rows" class="rows"></ol>
+  </main>
+
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://apis.google.com/js/api.js" async defer></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
