@@ -9,10 +9,22 @@ const CFG = window.WEATHER_APP_CONFIG || {};
 const CAL_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 const CAL_DISCOVERY = "https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest";
 const TOKEN_KEY = "wa_gcal_token";
+const UNIT_KEY = "wa_unit";
+const REFRESH_MS = 10 * 60 * 1000; // re-fetch weather + events every 10 min
+const TICK_MS = 60 * 1000; // move the "now" line every minute
+
+function loadUnit() {
+  try {
+    const u = localStorage.getItem(UNIT_KEY);
+    if (u === "celsius" || u === "fahrenheit") return u;
+  } catch (e) {}
+  return "celsius";
+}
 
 const state = {
   location: CFG.DEFAULT_LOCATION || { name: "Toronto", latitude: 43.6532, longitude: -79.3832 },
   dayOffset: 0, // 0 = today, 1 = tomorrow, ...
+  unit: loadUnit(), // "celsius" | "fahrenheit"
   weather: null, // { "YYYY-MM-DDTHH:00": {temp, code, precip} }
   events: [], // normalized calendar events for the selected day
   gcalReady: false, // GIS + gapi both loaded
@@ -26,6 +38,7 @@ const els = {
   dateLabel: document.getElementById("date-label"),
   allday: document.getElementById("allday"),
   gcalBtn: document.getElementById("gcal-btn"),
+  unitBtn: document.getElementById("unit-btn"),
   cityForm: document.getElementById("city-form"),
   cityInput: document.getElementById("city-input"),
   geoBtn: document.getElementById("geo-btn"),
@@ -107,6 +120,7 @@ async function loadWeather() {
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
     `&hourly=temperature_2m,precipitation_probability,weather_code` +
+    `&temperature_unit=${state.unit}` +
     `&timezone=auto&start_date=${date}&end_date=${date}`;
 
   setStatus(`Loading weather for ${state.location.name}…`);
@@ -286,9 +300,10 @@ function normalizeEvent(ev) {
 
 /* ---------- render ---------- */
 
-function render() {
+function render({ scroll = false } = {}) {
   els.dateLabel.textContent = fmtDayLabel();
   els.location.textContent = state.location.name;
+  els.unitBtn.textContent = state.unit === "celsius" ? "°F" : "°C";
 
   // all-day events
   const allDay = state.events.filter((e) => e.allDay);
@@ -312,8 +327,16 @@ function render() {
   for (let hour = 0; hour < 24; hour++) {
     const li = document.createElement("li");
     li.className = "row";
-    if (isToday && hour === now.getHours()) li.classList.add("now");
-    else if (isToday && hour < now.getHours()) li.classList.add("past");
+    if (isToday && hour === now.getHours()) {
+      li.classList.add("now");
+      // horizontal line at the exact current minute within this hour row
+      const line = document.createElement("div");
+      line.className = "now-line";
+      line.style.top = `${(now.getMinutes() / 60) * 100}%`;
+      li.appendChild(line);
+    } else if (isToday && hour < now.getHours()) {
+      li.classList.add("past");
+    }
 
     // time
     const time = document.createElement("div");
@@ -364,7 +387,7 @@ function render() {
 
   els.rows.replaceChildren(frag);
 
-  if (isToday) {
+  if (isToday && scroll) {
     const nowRow = els.rows.querySelector(".row.now");
     if (nowRow) nowRow.scrollIntoView({ block: "center", behavior: "smooth" });
   }
@@ -403,7 +426,7 @@ async function refresh() {
     setStatus(`Weather failed: ${err.message}`);
   }
   await loadEvents();
-  render();
+  render({ scroll: true });
 }
 
 /* ---------- events wiring ---------- */
@@ -411,6 +434,14 @@ async function refresh() {
 els.gcalBtn.addEventListener("click", () => {
   if (state.connected) disconnectCalendar();
   else connectCalendar();
+});
+
+els.unitBtn.addEventListener("click", async () => {
+  state.unit = state.unit === "celsius" ? "fahrenheit" : "celsius";
+  try {
+    localStorage.setItem(UNIT_KEY, state.unit);
+  } catch (e) {}
+  await refresh();
 });
 
 els.cityForm.addEventListener("submit", async (e) => {
@@ -476,5 +507,9 @@ if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   });
 }
+
+// Keep data fresh and the "now" line moving while the tab stays open.
+setInterval(refresh, REFRESH_MS);
+setInterval(() => render(), TICK_MS);
 
 refresh();
