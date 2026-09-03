@@ -50,6 +50,7 @@ const state = {
   calendarId: readLS(CAL_ID_KEY, CFG.CALENDAR_ID || ""),
   calHistory: loadCalHistory(), // recently entered calendar IDs
   weather: null, // { "YYYY-MM-DDTHH:00": {temp, code, precip} }
+  aqi: null, // { value } — current US AQI for the location, or null if unavailable
   events: [], // normalized calendar events for the selected day
   calName: "", // display name of the calendar
   calError: "", // last calendar-load error, shown in the header
@@ -71,6 +72,10 @@ const els = {
   geoBtn: document.getElementById("geo-btn"),
   prevDay: document.getElementById("prev-day"),
   nextDay: document.getElementById("next-day"),
+  air: document.getElementById("air"),
+  airValue: document.getElementById("air-value"),
+  airWord: document.getElementById("air-word"),
+  airMarker: document.getElementById("air-marker"),
 };
 
 /* ---------- date helpers ---------- */
@@ -210,6 +215,42 @@ async function searchCity(query) {
   };
 }
 
+/* ---------- air quality (Open-Meteo, keyless) ---------- */
+
+const AQI_SCALE_MAX = 300; // the bar spans 0–300 US AQI; higher clamps to the end
+
+// US EPA AQI bands — the number's colour and the word shown under it.
+function aqiCategory(v) {
+  if (v <= 50) return { word: "Good", color: "#4caf50" };
+  if (v <= 100) return { word: "Moderate", color: "#ffcf49" };
+  if (v <= 150) return { word: "Unhealthy (sensitive)", color: "#ff9800" };
+  if (v <= 200) return { word: "Unhealthy", color: "#f44336" };
+  if (v <= 300) return { word: "Very Unhealthy", color: "#9c27b0" };
+  return { word: "Hazardous", color: "#7e0023" };
+}
+
+// Never rejects — a missing/broken AQI just hides the widget.
+async function loadAirQuality() {
+  const { latitude, longitude } = state.location;
+  const url =
+    `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${latitude}&longitude=${longitude}` +
+    `&current=us_aqi&timezone=auto`;
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    const data = JSON.parse(await res.text());
+    const v = data && data.current ? data.current.us_aqi : null;
+    state.aqi = typeof v === "number" ? { value: Math.round(v) } : null;
+  } catch (e) {
+    state.aqi = null;
+    console.warn("Air quality load failed:", e);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /* ---------- Google Calendar (public, API key) ---------- */
 
 function apiKey() {
@@ -293,6 +334,8 @@ function render({ scroll = false } = {}) {
   els.location.textContent = state.location.name;
   els.unitToggle.dataset.unit = state.unit; // slides the thumb to the active side
   els.calName.textContent = state.calError || state.calName || "";
+
+  renderAir();
 
   // calendar input: reflect the loaded calendar (unless the user is typing)
   if (document.activeElement !== els.calInput) {
@@ -392,6 +435,22 @@ function render({ scroll = false } = {}) {
   }
 }
 
+function renderAir() {
+  if (!state.aqi) {
+    els.air.hidden = true;
+    return;
+  }
+  const { value } = state.aqi;
+  const cat = aqiCategory(value);
+  const pct = Math.max(0, Math.min(100, (value / AQI_SCALE_MAX) * 100));
+  els.air.hidden = false;
+  els.air.title = `US Air Quality Index: ${value} — ${cat.word}`;
+  els.airValue.textContent = value;
+  els.airValue.style.color = cat.color;
+  els.airWord.textContent = cat.word;
+  els.airMarker.style.left = `${pct}%`;
+}
+
 function overlapsHour(ev, date, hour) {
   const slotStart = new Date(date);
   slotStart.setHours(hour, 0, 0, 0);
@@ -426,7 +485,7 @@ async function refresh() {
 
   // Load both columns in parallel — a slow/broken weather API must not
   // hold up the calendar (loadEvents handles its own errors, never rejects).
-  const [weather] = await Promise.allSettled([loadWeather(), loadEvents()]);
+  const [weather] = await Promise.allSettled([loadWeather(), loadEvents(), loadAirQuality()]);
   if (gen !== refreshGen) return; // superseded by a newer refresh
 
   const weatherOk = weather.status === "fulfilled";
