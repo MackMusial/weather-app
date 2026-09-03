@@ -17,7 +17,6 @@
         <h1>Weather + Calendar</h1>
         <p id="location" class="location">Locating…</p>
       </div>
-      <button id="gcal-btn" class="btn" type="button">Connect Google Calendar</button>
     </div>
 
     <div class="controls">
@@ -27,12 +26,25 @@
         <button id="geo-btn" class="btn btn-ghost" type="button" title="Use my location">📍</button>
       </form>
 
+      <div id="unit-toggle" class="unit-toggle" data-unit="celsius" role="group" aria-label="Temperature unit">
+        <span class="unit-thumb" aria-hidden="true"></span>
+        <button class="unit-opt" type="button" data-unit="celsius">°C</button>
+        <button class="unit-opt" type="button" data-unit="fahrenheit">°F</button>
+      </div>
+
       <div class="date-nav">
         <button id="prev-day" class="btn btn-ghost" type="button" aria-label="Previous day">‹</button>
         <span id="date-label">Today</span>
         <button id="next-day" class="btn btn-ghost" type="button" aria-label="Next day">›</button>
       </div>
     </div>
+
+    <form id="cal-form" class="cal-form">
+      <input id="cal-input" type="text" list="cal-history" autocomplete="off" spellcheck="false"
+        placeholder="Public calendar email or ID…" aria-label="Public Google Calendar" />
+      <datalist id="cal-history"></datalist>
+      <button class="btn" type="submit">Load</button>
+    </form>
 
     <p id="status" class="status" role="status"></p>
     <div id="allday" class="allday" hidden></div>
@@ -42,13 +54,11 @@
     <div class="grid-head">
       <span>Time</span>
       <span>Weather</span>
-      <span>Calendar</span>
+      <span>Calendar <small id="cal-name" class="cal-name"></small></span>
     </div>
     <ol id="rows" class="rows"></ol>
   </main>
 
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="https://apis.google.com/js/api.js" async defer></script>
   <script src="config.js"></script>
   <script src="app.js"></script>
 </body>

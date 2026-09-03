@@ -1,22 +1,58 @@
 /* Weather + Calendar PWA
  * Column 1: hour of day
  * Column 2: hourly weather from Open-Meteo (free, no key)
- * Column 3: your Google Calendar events in that hour
+ * Column 3: events from a PUBLIC Google Calendar (read with an API key)
  */
 "use strict";
 
 const CFG = window.WEATHER_APP_CONFIG || {};
-const CAL_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
-const CAL_DISCOVERY = "https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest";
-const TOKEN_KEY = "wa_gcal_token";
+const CAL_API = "https://www.googleapis.com/calendar/v3/calendars";
+const UNIT_KEY = "wa_unit";
+const CAL_ID_KEY = "wa_calendar_id";
+const CAL_HIST_KEY = "wa_calendar_history";
+const REFRESH_MS = 10 * 60 * 1000; // re-fetch weather + events every 10 min
+const TICK_MS = 60 * 1000; // move the "now" line every minute
+
+function readLS(key, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    return v == null ? fallback : v;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function writeLS(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {}
+}
+
+function loadUnit() {
+  const u = readLS(UNIT_KEY, "celsius");
+  return u === "fahrenheit" ? "fahrenheit" : "celsius";
+}
+
+function loadCalHistory() {
+  try {
+    const arr = JSON.parse(readLS(CAL_HIST_KEY, "[]"));
+    return Array.isArray(arr) ? arr.filter((s) => typeof s === "string") : [];
+  } catch (e) {
+    return [];
+  }
+}
 
 const state = {
   location: CFG.DEFAULT_LOCATION || { name: "Toronto", latitude: 43.6532, longitude: -79.3832 },
   dayOffset: 0, // 0 = today, 1 = tomorrow, ...
+  unit: loadUnit(), // "celsius" | "fahrenheit"
+  // the public calendar to show — remembered choice, else the config default
+  calendarId: readLS(CAL_ID_KEY, CFG.CALENDAR_ID || ""),
+  calHistory: loadCalHistory(), // recently entered calendar IDs
   weather: null, // { "YYYY-MM-DDTHH:00": {temp, code, precip} }
   events: [], // normalized calendar events for the selected day
-  gcalReady: false, // GIS + gapi both loaded
-  connected: false,
+  calName: "", // display name of the calendar
+  calError: "", // last calendar-load error, shown in the header
 };
 
 const els = {
@@ -25,7 +61,11 @@ const els = {
   location: document.getElementById("location"),
   dateLabel: document.getElementById("date-label"),
   allday: document.getElementById("allday"),
-  gcalBtn: document.getElementById("gcal-btn"),
+  calName: document.getElementById("cal-name"),
+  calForm: document.getElementById("cal-form"),
+  calInput: document.getElementById("cal-input"),
+  calHistory: document.getElementById("cal-history"),
+  unitToggle: document.getElementById("unit-toggle"),
   cityForm: document.getElementById("city-form"),
   cityInput: document.getElementById("city-input"),
   geoBtn: document.getElementById("geo-btn"),
@@ -107,6 +147,7 @@ async function loadWeather() {
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
     `&hourly=temperature_2m,precipitation_probability,weather_code` +
+    `&temperature_unit=${state.unit}` +
     `&timezone=auto&start_date=${date}&end_date=${date}`;
 
   setStatus(`Loading weather for ${state.location.name}…`);
@@ -143,131 +184,61 @@ async function searchCity(query) {
   };
 }
 
-/* ---------- Google Calendar ---------- */
+/* ---------- Google Calendar (public, API key) ---------- */
 
-let tokenClient = null;
-let gapiInited = false;
-let gisInited = false;
-
-function onGapiLoad() {
-  gapi.load("client", async () => {
-    await gapi.client.init({ discoveryDocs: [CAL_DISCOVERY] });
-    gapiInited = true;
-    maybeReady();
-  });
+function apiKey() {
+  const k = CFG.GOOGLE_API_KEY;
+  return k && !k.startsWith("PASTE_") ? k : "";
 }
 
-function onGisLoad() {
-  if (!CFG.GOOGLE_CLIENT_ID || CFG.GOOGLE_CLIENT_ID.startsWith("PASTE_")) {
-    els.gcalBtn.textContent = "Set Google Client ID";
-    els.gcalBtn.disabled = true;
-    setStatus("Add your OAuth client ID in config.js to enable calendar.");
-    return;
-  }
-  tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: CFG.GOOGLE_CLIENT_ID,
-    scope: CAL_SCOPE,
-    callback: (resp) => {
-      if (resp.error) {
-        setStatus(`Google auth error: ${resp.error}`);
-        return;
-      }
-      persistToken(resp);
-      afterAuth();
-    },
-  });
-  gisInited = true;
-  maybeReady();
-}
-
-function maybeReady() {
-  if (gapiInited && gisInited) {
-    state.gcalReady = true;
-    const saved = loadToken();
-    if (saved) {
-      gapi.client.setToken(saved);
-      afterAuth();
-    }
-  }
-}
-
-function persistToken(resp) {
-  const token = {
-    access_token: resp.access_token,
-    expires_at: Date.now() + (Number(resp.expires_in) || 3600) * 1000,
-  };
-  try {
-    sessionStorage.setItem(TOKEN_KEY, JSON.stringify(token));
-  } catch (e) {}
-}
-
-function loadToken() {
-  try {
-    const raw = sessionStorage.getItem(TOKEN_KEY);
-    if (!raw) return null;
-    const t = JSON.parse(raw);
-    if (t.expires_at && t.expires_at > Date.now() + 30000) return t;
-    sessionStorage.removeItem(TOKEN_KEY);
-  } catch (e) {}
-  return null;
-}
-
-function connectCalendar() {
-  if (!state.gcalReady || !tokenClient) {
-    setStatus("Google libraries still loading — try again in a moment.");
-    return;
-  }
-  const prompt = gapi.client.getToken() ? "" : "consent";
-  tokenClient.requestAccessToken({ prompt });
-}
-
-function disconnectCalendar() {
-  const t = gapi.client.getToken();
-  if (t) {
-    google.accounts.oauth2.revoke(t.access_token, () => {});
-    gapi.client.setToken(null);
-  }
-  try {
-    sessionStorage.removeItem(TOKEN_KEY);
-  } catch (e) {}
-  state.connected = false;
-  state.events = [];
-  els.gcalBtn.textContent = "Connect Google Calendar";
-  render();
-}
-
-async function afterAuth() {
-  state.connected = true;
-  els.gcalBtn.textContent = "Disconnect Calendar";
-  await loadEvents();
-  render();
+function rememberCalendar(id) {
+  state.calendarId = id;
+  writeLS(CAL_ID_KEY, id);
+  state.calHistory = [id, ...state.calHistory.filter((h) => h !== id)].slice(0, 6);
+  writeLS(CAL_HIST_KEY, JSON.stringify(state.calHistory));
 }
 
 async function loadEvents() {
-  if (!state.connected) return;
+  if (!apiKey()) {
+    state.events = [];
+    state.calName = "";
+    state.calError = "Add GOOGLE_API_KEY in config.js";
+    return;
+  }
+  if (!state.calendarId) {
+    state.events = [];
+    state.calName = "";
+    state.calError = "Enter a public calendar above";
+    return;
+  }
+
   const day = selectedDate();
   const start = new Date(day);
   const end = new Date(day);
   end.setDate(end.getDate() + 1);
 
+  const url =
+    `${CAL_API}/${encodeURIComponent(state.calendarId)}/events` +
+    `?key=${encodeURIComponent(apiKey())}` +
+    `&timeMin=${start.toISOString()}` +
+    `&timeMax=${end.toISOString()}` +
+    `&singleEvents=true&orderBy=startTime&maxResults=100`;
+
   try {
-    const res = await gapi.client.calendar.events.list({
-      calendarId: "primary",
-      timeMin: start.toISOString(),
-      timeMax: end.toISOString(),
-      singleEvents: true,
-      orderBy: "startTime",
-      maxResults: 100,
-    });
-    state.events = (res.result.items || []).map(normalizeEvent);
-  } catch (err) {
-    if (err?.status === 401) {
-      disconnectCalendar();
-      setStatus("Calendar session expired — reconnect.");
-    } else {
-      setStatus("Could not load calendar events.");
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 404) throw new Error("calendar not found or not public");
+      throw new Error(data.error?.message || `Calendar API ${res.status}`);
     }
+    state.events = (data.items || []).map(normalizeEvent);
+    state.calName = data.summary || state.calendarId;
+    state.calError = "";
+  } catch (err) {
     state.events = [];
+    state.calName = "";
+    state.calError = `Calendar: ${err.message}`;
+    console.warn("Calendar load failed:", err);
   }
 }
 
@@ -286,9 +257,23 @@ function normalizeEvent(ev) {
 
 /* ---------- render ---------- */
 
-function render() {
+function render({ scroll = false } = {}) {
   els.dateLabel.textContent = fmtDayLabel();
   els.location.textContent = state.location.name;
+  els.unitToggle.dataset.unit = state.unit; // slides the thumb to the active side
+  els.calName.textContent = state.calError || state.calName || "";
+
+  // calendar input: reflect the loaded calendar (unless the user is typing)
+  if (document.activeElement !== els.calInput) {
+    els.calInput.value = state.calendarId;
+  }
+  els.calHistory.replaceChildren(
+    ...state.calHistory.map((id) => {
+      const o = document.createElement("option");
+      o.value = id;
+      return o;
+    })
+  );
 
   // all-day events
   const allDay = state.events.filter((e) => e.allDay);
@@ -312,8 +297,16 @@ function render() {
   for (let hour = 0; hour < 24; hour++) {
     const li = document.createElement("li");
     li.className = "row";
-    if (isToday && hour === now.getHours()) li.classList.add("now");
-    else if (isToday && hour < now.getHours()) li.classList.add("past");
+    if (isToday && hour === now.getHours()) {
+      li.classList.add("now");
+      // horizontal line at the exact current minute within this hour row
+      const line = document.createElement("div");
+      line.className = "now-line";
+      line.style.top = `${(now.getMinutes() / 60) * 100}%`;
+      li.appendChild(line);
+    } else if (isToday && hour < now.getHours()) {
+      li.classList.add("past");
+    }
 
     // time
     const time = document.createElement("div");
@@ -352,10 +345,8 @@ function render() {
             }</div></div>`
         )
         .join("");
-    } else if (state.connected) {
-      cal.innerHTML = `<span class="empty">—</span>`;
     } else {
-      cal.innerHTML = `<span class="empty">connect calendar</span>`;
+      cal.innerHTML = `<span class="empty">—</span>`;
     }
     li.appendChild(cal);
 
@@ -364,7 +355,7 @@ function render() {
 
   els.rows.replaceChildren(frag);
 
-  if (isToday) {
+  if (isToday && scroll) {
     const nowRow = els.rows.querySelector(".row.now");
     if (nowRow) nowRow.scrollIntoView({ block: "center", behavior: "smooth" });
   }
@@ -403,14 +394,26 @@ async function refresh() {
     setStatus(`Weather failed: ${err.message}`);
   }
   await loadEvents();
-  render();
+  render({ scroll: true });
 }
 
 /* ---------- events wiring ---------- */
 
-els.gcalBtn.addEventListener("click", () => {
-  if (state.connected) disconnectCalendar();
-  else connectCalendar();
+els.unitToggle.addEventListener("click", async (e) => {
+  const opt = e.target.closest(".unit-opt");
+  if (!opt || opt.dataset.unit === state.unit) return;
+  state.unit = opt.dataset.unit;
+  writeLS(UNIT_KEY, state.unit);
+  await refresh();
+});
+
+els.calForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const id = els.calInput.value.trim();
+  if (!id) return;
+  rememberCalendar(id);
+  els.calInput.blur();
+  await refresh();
 });
 
 els.cityForm.addEventListener("submit", async (e) => {
@@ -463,18 +466,14 @@ els.nextDay.addEventListener("click", async () => {
 
 /* ---------- boot ---------- */
 
-// Google libraries load async; poll until their globals exist.
-const bootGoogle = setInterval(() => {
-  if (window.gapi && !gapiInited) onGapiLoad();
-  if (window.google?.accounts?.oauth2 && !gisInited) onGisLoad();
-  if (gapiInited && gisInited) clearInterval(bootGoogle);
-}, 200);
-setTimeout(() => clearInterval(bootGoogle), 15000);
-
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   });
 }
+
+// Keep data fresh and the "now" line moving while the tab stays open.
+setInterval(refresh, REFRESH_MS);
+setInterval(() => render(), TICK_MS);
 
 refresh();

@@ -67,7 +67,14 @@ h1 {
   flex: 1 1 220px;
 }
 
-#city-input {
+.cal-form {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+#city-input,
+#cal-input {
   flex: 1;
   min-width: 0;
   padding: 8px 10px;
@@ -105,6 +112,51 @@ h1 {
 }
 
 .btn:active { transform: translateY(1px); }
+
+.unit-toggle {
+  position: relative;
+  display: flex;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  user-select: none;
+}
+
+.unit-thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  border-radius: 999px;
+  background: var(--accent);
+  transition: transform 0.18s ease;
+}
+
+.unit-toggle[data-unit="fahrenheit"] .unit-thumb {
+  transform: translateX(100%);
+}
+
+.unit-opt {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 42px;
+  padding: 5px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: color 0.18s ease;
+}
+
+.unit-toggle[data-unit="celsius"] .unit-opt[data-unit="celsius"],
+.unit-toggle[data-unit="fahrenheit"] .unit-opt[data-unit="fahrenheit"] {
+  color: #1a1a1a;
+}
 
 .status {
   margin: 8px 0 0;
@@ -149,6 +201,19 @@ main { padding: 0 10px 40px; }
   border-bottom: 1px solid var(--line);
 }
 
+.cal-name {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .rows {
   list-style: none;
   margin: 0;
@@ -158,6 +223,36 @@ main { padding: 0 10px 40px; }
 .row {
   padding: 10px 6px;
   border-bottom: 1px solid var(--line);
+  position: relative; /* anchor for .now-line */
+}
+
+.now-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #ff5f56;
+  z-index: 0; /* above the row background, below the row's text */
+  pointer-events: none;
+}
+
+/* lift the row's content above the now-line so the line reads as behind it */
+.row > .time,
+.row > .wx,
+.row > .events {
+  position: relative;
+  z-index: 1;
+}
+
+.now-line::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff5f56;
 }
 
 .row.now {
