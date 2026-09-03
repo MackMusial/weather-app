@@ -151,9 +151,29 @@ async function loadWeather() {
     `&timezone=auto&start_date=${date}&end_date=${date}`;
 
   setStatus(`Loading weather for ${state.location.name}…`);
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Weather API ${res.status}`);
-  const data = await res.json();
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
+  let res;
+  try {
+    res = await fetch(url, { signal: ctrl.signal });
+  } catch (e) {
+    throw new Error(e.name === "AbortError" ? "weather service timed out" : e.message);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  // Open-Meteo sometimes returns a plain-text error with a 200, so parse defensively.
+  const body = await res.text();
+  let data;
+  try {
+    data = JSON.parse(body);
+  } catch (e) {
+    throw new Error("weather service is temporarily unavailable");
+  }
+  if (!res.ok || data.error || !data.hourly) {
+    throw new Error(data.reason || `weather service error (${res.status})`);
+  }
 
   const h = data.hourly;
   const map = {};
@@ -386,15 +406,26 @@ function escapeHtml(s) {
 
 /* ---------- refresh orchestration ---------- */
 
+let weatherRetry = null;
+
 async function refresh() {
   render(); // paint the grid immediately
-  try {
-    await loadWeather();
-  } catch (err) {
-    setStatus(`Weather failed: ${err.message}`);
+
+  // Load both columns in parallel — a slow/broken weather API must not
+  // hold up the calendar (loadEvents handles its own errors, never rejects).
+  const [weather] = await Promise.allSettled([loadWeather(), loadEvents()]);
+  const weatherOk = weather.status === "fulfilled";
+  if (!weatherOk) {
+    setStatus(`Weather unavailable — ${weather.reason?.message || "error"}. Retrying…`);
   }
-  await loadEvents();
+
   render({ scroll: true });
+
+  // On a weather failure, retry sooner than the normal 10-min cycle.
+  clearTimeout(weatherRetry);
+  if (!weatherOk) {
+    weatherRetry = setTimeout(refresh, 90 * 1000);
+  }
 }
 
 /* ---------- events wiring ---------- */
