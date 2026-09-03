@@ -3,7 +3,7 @@
  * the cache is only a fallback when a request fails offline. That keeps the
  * app shell from ever going stale while online.
  */
-const CACHE = "weathercal-v5";
+const CACHE = "weathercal-v6";
 const SHELL = [
   "./",
   "index.html",

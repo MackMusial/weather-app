@@ -49,7 +49,8 @@ const state = {
   // the public calendar to show — remembered choice, else the config default
   calendarId: readLS(CAL_ID_KEY, CFG.CALENDAR_ID || ""),
   calHistory: loadCalHistory(), // recently entered calendar IDs
-  weather: null, // { "YYYY-MM-DDTHH:00": {temp, code, precip} }
+  weather: null, // { "YYYY-MM-DDTHH:00": {temp, code, precip, isDay} }
+  nowWx: null, // last-known conditions for the current hour (drives the background)
   aqi: null, // { value } — current US AQI for the location, or null if unavailable
   events: [], // normalized calendar events for the selected day
   calName: "", // display name of the calendar
@@ -76,6 +77,9 @@ const els = {
   airValue: document.getElementById("air-value"),
   airWord: document.getElementById("air-word"),
   airMarker: document.getElementById("air-marker"),
+  settingsBtn: document.getElementById("settings-btn"),
+  settingsPanel: document.getElementById("settings-panel"),
+  precip: document.getElementById("precip"),
 };
 
 /* ---------- date + window helpers ---------- */
@@ -196,7 +200,7 @@ async function loadWeather() {
   const { latitude, longitude } = state.location;
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
-    `&hourly=temperature_2m,precipitation_probability,weather_code` +
+    `&hourly=temperature_2m,precipitation_probability,weather_code,is_day` +
     `&temperature_unit=${state.unit}` +
     `&timezone=auto&start_date=${startDate}&end_date=${endDate}`;
 
@@ -232,9 +236,12 @@ async function loadWeather() {
       temp: h.temperature_2m[i],
       code: h.weather_code[i],
       precip: h.precipitation_probability ? h.precipitation_probability[i] : null,
+      isDay: h.is_day ? h.is_day[i] : null,
     };
   });
   state.weather = map;
+  const nowKey = hourKey(new Date(), new Date().getHours());
+  if (map[nowKey]) state.nowWx = map[nowKey]; // stash current conditions for the background
   state.tempUnit = data.hourly_units?.temperature_2m || "°C";
   setStatus("");
 }
@@ -450,7 +457,7 @@ async function loadEvents() {
   if (!state.calendarId) {
     state.events = [];
     state.calName = "";
-    state.calError = "Enter a public calendar above";
+    state.calError = "Add a calendar in ⚙ settings";
     return;
   }
 
@@ -503,9 +510,108 @@ function normalizeEvent(ev) {
   };
 }
 
+/* ---------- reactive background ---------- */
+
+// WMO weather code -> a coarse "sky" the background reacts to
+function skyFromCode(code) {
+  if (code == null) return "clear";
+  if (code <= 1) return "clear";
+  if (code === 2 || code === 3) return "clouds";
+  if (code === 45 || code === 48) return "fog";
+  if (code >= 71 && code <= 77) return "snow";
+  if (code === 85 || code === 86) return "snow";
+  if (code >= 95) return "thunder";
+  if (code >= 51 && code <= 82) return "rain"; // drizzle / rain / showers
+  return "clouds";
+}
+
+function currentConditions() {
+  const now = new Date();
+  const w =
+    (state.weather && state.weather[hourKey(now, now.getHours())]) || state.nowWx;
+  const hour = now.getHours();
+  const isDay = w && w.isDay != null ? w.isDay === 1 : hour >= 7 && hour < 19;
+  return { sky: w ? skyFromCode(w.code) : "clear", isDay };
+}
+
+let skyKey = "";
+
+function applySky() {
+  const { sky, isDay } = currentConditions();
+  document.body.dataset.sky = sky;
+  document.body.dataset.day = isDay ? "day" : "night";
+
+  const key = `${sky}|${isDay ? "day" : "night"}`;
+  if (key === skyKey) return; // particle layer only rebuilds when the mood changes
+  skyKey = key;
+  buildPrecip(sky, isDay);
+}
+
+function reducedMotion() {
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch (e) {
+    return false;
+  }
+}
+
+function buildPrecip(sky, isDay) {
+  const layer = els.precip;
+  if (!layer) return;
+  layer.replaceChildren();
+  if (reducedMotion()) return;
+
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const add = (cls, styles) => {
+    const el = document.createElement("span");
+    el.className = cls;
+    for (const [k, v] of Object.entries(styles)) {
+      if (k.startsWith("--")) el.style.setProperty(k, v);
+      else el.style[k] = v;
+    }
+    layer.appendChild(el);
+  };
+
+  if (sky === "rain" || sky === "thunder") {
+    for (let i = 0; i < 90; i++) {
+      add("drop", {
+        left: `${rnd(0, 100)}%`,
+        height: `${rnd(12, 26)}px`,
+        opacity: `${rnd(0.2, 0.55)}`,
+        animationDuration: `${rnd(0.45, 0.9)}s`,
+        animationDelay: `${rnd(-2, 0)}s`,
+      });
+    }
+  } else if (sky === "snow") {
+    for (let i = 0; i < 55; i++) {
+      const s = rnd(3, 7);
+      add("flake", {
+        left: `${rnd(0, 100)}%`,
+        width: `${s}px`,
+        height: `${s}px`,
+        opacity: `${rnd(0.3, 0.85)}`,
+        animationDuration: `${rnd(6, 13)}s`,
+        animationDelay: `${rnd(-13, 0)}s`,
+        "--sway": `${rnd(8, 30)}px`,
+      });
+    }
+  } else if (sky === "clear" && !isDay) {
+    for (let i = 0; i < 44; i++) {
+      add("star", {
+        left: `${rnd(0, 100)}%`,
+        top: `${rnd(0, 92)}%`,
+        opacity: `${rnd(0.2, 0.9)}`,
+        animationDuration: `${rnd(2.5, 6)}s`,
+        animationDelay: `${rnd(-6, 0)}s`,
+      });
+    }
+  }
+}
+
 /* ---------- render ---------- */
 
 function render({ scroll = false } = {}) {
+  applySky();
   els.dateLabel.textContent = windowLabel();
   els.location.textContent = state.location.name;
   els.unitToggle.dataset.unit = state.unit; // slides the thumb to the active side
@@ -710,7 +816,35 @@ async function refresh() {
 
 /* ---------- events wiring ---------- */
 
+function setSettingsOpen(open) {
+  els.settingsPanel.hidden = !open;
+  els.settingsBtn.setAttribute("aria-expanded", String(open));
+  if (open) els.calInput.focus();
+}
+
 function wireEvents() {
+  els.settingsBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setSettingsOpen(els.settingsPanel.hidden);
+  });
+
+  // click-away and Escape close the settings dropdown
+  document.addEventListener("click", (e) => {
+    if (
+      !els.settingsPanel.hidden &&
+      !els.settingsPanel.contains(e.target) &&
+      e.target !== els.settingsBtn
+    ) {
+      setSettingsOpen(false);
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !els.settingsPanel.hidden) {
+      setSettingsOpen(false);
+      els.settingsBtn.focus();
+    }
+  });
+
   els.unitToggle.addEventListener("click", async (e) => {
     const opt = e.target.closest(".unit-opt");
     if (!opt || opt.dataset.unit === state.unit) return;
@@ -725,6 +859,7 @@ function wireEvents() {
     if (!id) return;
     rememberCalendar(id);
     els.calInput.blur();
+    setSettingsOpen(false);
     await refresh();
   });
 
