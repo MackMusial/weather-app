@@ -58,14 +58,17 @@ h1 {
   gap: 8px;
   margin-top: 10px;
   align-items: center;
-  justify-content: space-between;
 }
 
 .city-form {
   display: flex;
   gap: 6px;
-  flex: 1 1 220px;
+  flex: 1 1 100%;
 }
+
+.unit-toggle { flex: 0 0 auto; }
+
+.date-nav { flex: 1 1 auto; justify-content: flex-end; }
 
 .cal-form {
   display: flex;
@@ -275,13 +278,19 @@ main { padding: 0 10px 40px; }
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .wx .icon { font-size: 20px; }
 .wx .temp { font-weight: 700; }
-.wx .meta { color: var(--muted); font-size: 12px; }
+.wx .meta { color: var(--muted); font-size: 12px; min-width: 0; }
 
-.events { display: flex; flex-direction: column; gap: 4px; }
+.events {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
 
 .event {
   background: var(--card);
@@ -290,6 +299,7 @@ main { padding: 0 10px 40px; }
   border-radius: 6px;
   padding: 4px 8px;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .event .when { color: var(--muted); font-size: 11px; }
