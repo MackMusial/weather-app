@@ -194,10 +194,112 @@ async function loadWeather() {
   setStatus("");
 }
 
+// US state + Canadian province abbreviations, so "Woodhaven, MI" resolves.
+const REGION_ABBR = {
+  al: "alabama", ak: "alaska", az: "arizona", ar: "arkansas", ca: "california",
+  co: "colorado", ct: "connecticut", de: "delaware", fl: "florida", ga: "georgia",
+  hi: "hawaii", id: "idaho", il: "illinois", in: "indiana", ia: "iowa",
+  ks: "kansas", ky: "kentucky", la: "louisiana", me: "maine", md: "maryland",
+  ma: "massachusetts", mi: "michigan", mn: "minnesota", ms: "mississippi",
+  mo: "missouri", mt: "montana", ne: "nebraska", nv: "nevada",
+  nh: "new hampshire", nj: "new jersey", nm: "new mexico", ny: "new york",
+  nc: "north carolina", nd: "north dakota", oh: "ohio", ok: "oklahoma",
+  or: "oregon", pa: "pennsylvania", ri: "rhode island", sc: "south carolina",
+  sd: "south dakota", tn: "tennessee", tx: "texas", ut: "utah", vt: "vermont",
+  va: "virginia", wa: "washington", wv: "west virginia", wi: "wisconsin",
+  wy: "wyoming", dc: "district of columbia",
+  on: "ontario", qc: "quebec", bc: "british columbia", ab: "alberta",
+  mb: "manitoba", sk: "saskatchewan", ns: "nova scotia", nb: "new brunswick",
+  nl: "newfoundland and labrador", pe: "prince edward island",
+  nt: "northwest territories", yt: "yukon", nu: "nunavut",
+};
+
+const COUNTRY_ALIAS = {
+  usa: "united states", us: "united states", "u.s.": "united states",
+  "u.s.a.": "united states", america: "united states",
+  uk: "united kingdom", gb: "united kingdom", england: "united kingdom",
+  uae: "united arab emirates", "south korea": "south korea",
+};
+
+// full country names people might tack on without a comma ("Paris France")
+const COUNTRIES = [
+  "united states", "canada", "mexico", "united kingdom", "ireland", "france",
+  "germany", "spain", "portugal", "italy", "netherlands", "belgium",
+  "switzerland", "austria", "poland", "sweden", "norway", "denmark", "finland",
+  "iceland", "greece", "turkey", "russia", "ukraine", "czechia", "hungary",
+  "romania", "croatia", "serbia", "china", "japan", "south korea",
+  "north korea", "india", "pakistan", "bangladesh", "thailand", "vietnam",
+  "philippines", "indonesia", "malaysia", "singapore", "australia",
+  "new zealand", "brazil", "argentina", "chile", "colombia", "peru", "egypt",
+  "morocco", "nigeria", "kenya", "south africa", "ghana", "israel",
+  "saudi arabia", "united arab emirates", "qatar", "scotland", "wales",
+];
+
+// every phrase that may legitimately trail a place name as a state/country hint
+const KNOWN_QUALIFIERS = new Set([
+  ...Object.keys(REGION_ABBR),
+  ...Object.values(REGION_ABBR),
+  ...Object.keys(COUNTRY_ALIAS),
+  ...Object.values(COUNTRY_ALIAS),
+  ...COUNTRIES,
+]);
+
+// "Woodhaven, MI" or "Woodhaven MI" -> { name: "Woodhaven", quals: ["mi"] }
+function parseCityQuery(query) {
+  const q = query.trim();
+
+  if (q.includes(",")) {
+    const parts = q.split(",").map((s) => s.trim()).filter(Boolean);
+    return { name: parts[0] || q, quals: parts.slice(1).map((s) => s.toLowerCase()) };
+  }
+
+  // no comma: peel a trailing 1–3 word qualifier only if we recognise it
+  const words = q.split(/\s+/);
+  for (let take = Math.min(3, words.length - 1); take >= 1; take--) {
+    const tail = words.slice(-take).join(" ").toLowerCase();
+    if (KNOWN_QUALIFIERS.has(tail)) {
+      return { name: words.slice(0, -take).join(" "), quals: [tail] };
+    }
+  }
+  return { name: q, quals: [] };
+}
+
+// lowercase place-strings a result can be matched against
+function locTokens(r) {
+  const t = [];
+  const push = (s) => {
+    const v = String(s || "").toLowerCase().trim();
+    if (v) t.push(v);
+  };
+  push(r.admin1); push(r.admin2); push(r.admin3); push(r.admin4);
+  push(r.country); push(r.country_code);
+  const a1 = String(r.admin1 || "").toLowerCase();
+  for (const [abbr, full] of Object.entries(REGION_ABBR)) {
+    if (full === a1) push(abbr);
+  }
+  if (String(r.country_code || "").toLowerCase() === "us") push("usa");
+  return t;
+}
+
+// every qualifier ("mi", "michigan", "usa") must match some token of the result
+function matchesQualifiers(r, quals) {
+  const tokens = locTokens(r);
+  return quals.every((q) => {
+    const variants = new Set([q]);
+    if (REGION_ABBR[q]) variants.add(REGION_ABBR[q]);
+    if (COUNTRY_ALIAS[q]) variants.add(COUNTRY_ALIAS[q]);
+    return [...variants].some(
+      (v) => v.length >= 2 && tokens.some((t) => t === v || t.includes(v))
+    );
+  });
+}
+
 async function searchCity(query) {
+  const { name, quals } = parseCityQuery(query);
+
   const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
-    query
-  )}&count=1`;
+    name
+  )}&count=20`;
   const res = await fetch(url);
   let data;
   try {
@@ -206,8 +308,36 @@ async function searchCity(query) {
     throw new Error("search is temporarily unavailable");
   }
   if (!res.ok) throw new Error(data.reason || `search error (${res.status})`);
-  if (!data.results || !data.results.length) throw new Error("City not found");
-  const r = data.results[0];
+  if (!data.results || !data.results.length) throw new Error(`No place named "${name}"`);
+
+  let pool = data.results;
+  if (quals.length) {
+    const hits = pool.filter((r) => matchesQualifiers(r, quals));
+    if (!hits.length) {
+      const found = [
+        ...new Set(
+          pool
+            .map((r) => [r.admin1, r.country_code].filter(Boolean).join(", "))
+            .filter(Boolean)
+        ),
+      ].slice(0, 6);
+      throw new Error(
+        `No "${name}" in "${quals.join(", ")}". Found: ${found.join("; ")}`
+      );
+    }
+    pool = hits;
+  }
+
+  // prefer an exact name match, then the most populous
+  const nameLC = name.toLowerCase();
+  pool.sort((a, b) => {
+    const ax = a.name.toLowerCase() === nameLC ? 0 : 1;
+    const bx = b.name.toLowerCase() === nameLC ? 0 : 1;
+    if (ax !== bx) return ax - bx;
+    return (b.population || 0) - (a.population || 0);
+  });
+
+  const r = pool[0];
   return {
     name: [r.name, r.admin1, r.country_code].filter(Boolean).join(", "),
     latitude: r.latitude,
