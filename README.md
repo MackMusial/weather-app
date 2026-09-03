@@ -14,9 +14,10 @@ Built for **403 Mobile App Dev**. Vanilla HTML/CSS/JS — no build step, no fram
 ## Features
 
 - **Hourly weather** from [Open-Meteo](https://open-meteo.com/) — free, no API key. Temperature, WMO condition (with icon), and precipitation chance for all 24 hours.
+- **Air quality** — current US AQI for the location from Open-Meteo's keyless air-quality API, shown in the header as the number, a plain-language word (Good / Moderate / Unhealthy / …), and a marker on a 0–300 colour scale. Fails silently (widget hides) if unavailable.
 - **Public Google Calendar** — type any public calendar's email/ID into the header box (recent ones are remembered in a dropdown). Events are read with an API key, no sign-in, and placed in every hour they overlap; all-day events show as chips.
 - **°C / °F toggle** — sliding switch in the header; the choice is saved to `localStorage`.
-- **City search** (Open-Meteo geocoding) or **device geolocation** for the weather location.
+- **City search** (Open-Meteo geocoding) or **device geolocation** for the weather location. Add a state or country to disambiguate, with or without a comma — `Woodhaven MI`, `Paris, France`, `Springfield IL`. US-state and Canadian-province abbreviations are understood, as are ~60 country names; a bare name picks the most populous match.
 - **Day navigation** — today through +6 days (the forecast horizon).
 - **"Now" line** — a marker across the current hour's row at the exact minute; auto-refreshes weather + events every 10 min and advances the line every minute.
 - Current hour is highlighted and scrolled into view; past hours are dimmed.
@@ -28,6 +29,7 @@ Built for **403 Mobile App Dev**. Vanilla HTML/CSS/JS — no build step, no fram
 | Concern | Choice |
 |---------|--------|
 | Weather API | Open-Meteo REST (`/v1/forecast`, `/v1/search`) — keyless |
+| Air quality API | Open-Meteo Air Quality (`/v1/air-quality?current=us_aqi`) — keyless |
 | Calendar API | Google Calendar API v3 `events.list`, plain `fetch` with an API key |
 | Hosting | GitHub Pages (static) |
 | PWA | `manifest.webmanifest` + a **network-first, self-healing** `sw.js` |
@@ -102,7 +104,7 @@ DevTools → **Application** → **Clear site data**.
 |------|---------|
 | `index.html` | Header controls + 3-column grid |
 | `styles.css` | Mobile-first dark theme |
-| `app.js` | Weather fetch, calendar fetch, rendering, outage handling, self-heal |
+| `app.js` | Weather fetch, air-quality fetch, calendar fetch, rendering, outage handling, self-heal |
 | `config.js` | API key, default calendar ID, default location |
 | `manifest.webmanifest` | PWA metadata (name, icons, standalone display) |
 | `sw.js` | Service worker — network-first, deletes stale caches on activate |
