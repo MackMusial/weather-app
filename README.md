@@ -20,7 +20,8 @@ Built for **403 Mobile App Dev**. Vanilla HTML/CSS/JS — no build step, no fram
 - **Day navigation** — today through +6 days (the forecast horizon).
 - **"Now" line** — a marker across the current hour's row at the exact minute; auto-refreshes weather + events every 10 min and advances the line every minute.
 - Current hour is highlighted and scrolled into view; past hours are dimmed.
-- **Installable PWA** — service worker precaches the app shell. Assumes internet connectivity for all data.
+- **Resilient to API outages** — a slow or failing weather API can't block the calendar (they load in parallel), requests time out after 12 s, and a failed weather load retries every 90 s with a plain-language status instead of a raw error.
+- **Installable PWA** — add it to a phone home screen and it launches full-screen. Assumes internet connectivity for all data.
 
 ## Tech
 
@@ -29,7 +30,7 @@ Built for **403 Mobile App Dev**. Vanilla HTML/CSS/JS — no build step, no fram
 | Weather API | Open-Meteo REST (`/v1/forecast`, `/v1/search`) — keyless |
 | Calendar API | Google Calendar API v3 `events.list`, plain `fetch` with an API key |
 | Hosting | GitHub Pages (static) |
-| PWA | `manifest.webmanifest` + `sw.js` (app-shell cache) |
+| PWA | `manifest.webmanifest` + a **network-first, self-healing** `sw.js` |
 
 ## Run locally
 
@@ -70,10 +71,30 @@ next to the "Calendar" header. Your choice and recent entries are saved locally.
 > Calendar's sharing settings. A restricted API key that can only read the Calendar
 > API is safe to commit — there is no user data or secret involved.
 
+## Install on a phone
+
+The app is served over HTTPS from GitHub Pages, so it installs as a home-screen app.
+
+**iPhone / iPad (Safari):** open the live URL → **Share** button → **Add to Home
+Screen** → **Add**. Tapping the icon launches it full-screen, no address bar.
+
+**Android (Chrome):** open the live URL → **⋮** menu → **Install app** / **Add to
+Home screen**.
+
+It still needs internet on each launch — it is not built for offline use.
+
 ## Deploy
 
 Pushing to `main` publishes `/` to the URL above via GitHub Pages. Add the Pages
 origin to the API key's allowed referrers (step 3).
+
+### Updating after a deploy
+
+`sw.js` is **network-first**: while online it always serves fresh files, so a
+deploy shows up on the next load. If a browser is stuck on an old version (its
+service worker cached a mismatched set), `app.js` detects the mismatch on boot,
+clears its own caches + service worker, and reloads once. To force it by hand:
+DevTools → **Application** → **Clear site data**.
 
 ## Project layout
 
@@ -81,8 +102,8 @@ origin to the API key's allowed referrers (step 3).
 |------|---------|
 | `index.html` | Header controls + 3-column grid |
 | `styles.css` | Mobile-first dark theme |
-| `app.js` | Weather fetch, calendar fetch, rendering |
-| `config.js` | API key, calendar ID, default location |
-| `manifest.webmanifest` | PWA metadata |
-| `sw.js` | Service worker (app-shell precache) |
+| `app.js` | Weather fetch, calendar fetch, rendering, outage handling, self-heal |
+| `config.js` | API key, default calendar ID, default location |
+| `manifest.webmanifest` | PWA metadata (name, icons, standalone display) |
+| `sw.js` | Service worker — network-first, deletes stale caches on activate |
 | `gen-icons.js` | Regenerates `icons/` — `node gen-icons.js` |
