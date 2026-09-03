@@ -194,7 +194,13 @@ async function searchCity(query) {
     query
   )}&count=1`;
   const res = await fetch(url);
-  const data = await res.json();
+  let data;
+  try {
+    data = JSON.parse(await res.text());
+  } catch (e) {
+    throw new Error("search is temporarily unavailable");
+  }
+  if (!res.ok) throw new Error(data.reason || `search error (${res.status})`);
   if (!data.results || !data.results.length) throw new Error("City not found");
   const r = data.results[0];
   return {
@@ -246,7 +252,12 @@ async function loadEvents() {
 
   try {
     const res = await fetch(url);
-    const data = await res.json();
+    let data;
+    try {
+      data = JSON.parse(await res.text());
+    } catch (e) {
+      throw new Error("calendar service is temporarily unavailable");
+    }
     if (!res.ok) {
       if (res.status === 404) throw new Error("calendar not found or not public");
       throw new Error(data.error?.message || `Calendar API ${res.status}`);
@@ -407,13 +418,17 @@ function escapeHtml(s) {
 /* ---------- refresh orchestration ---------- */
 
 let weatherRetry = null;
+let refreshGen = 0;
 
 async function refresh() {
+  const gen = ++refreshGen; // so rapid nav/toggle clicks don't render out of order
   render(); // paint the grid immediately
 
   // Load both columns in parallel — a slow/broken weather API must not
   // hold up the calendar (loadEvents handles its own errors, never rejects).
   const [weather] = await Promise.allSettled([loadWeather(), loadEvents()]);
+  if (gen !== refreshGen) return; // superseded by a newer refresh
+
   const weatherOk = weather.status === "fulfilled";
   if (!weatherOk) {
     setStatus(`Weather unavailable — ${weather.reason?.message || "error"}. Retrying…`);
@@ -499,20 +514,34 @@ function wireEvents() {
 
 /* ---------- boot ---------- */
 
+const HEAL_FLAG = "wa_healed";
+
 function boot() {
   // Self-heal: if a stale cached index.html doesn't match this script, the
   // elements it expects are missing. Wipe caches + SW and reload instead of
-  // running half-broken.
+  // running half-broken — but only once per session, so a genuinely broken
+  // deploy can't cause a reload loop.
   const missing = Object.entries(els)
     .filter(([, node]) => !node)
     .map(([key]) => key);
   if (missing.length) {
     console.error("Stale HTML/JS mismatch — missing elements:", missing);
+    let alreadyHealed = false;
+    try {
+      alreadyHealed = sessionStorage.getItem(HEAL_FLAG) === "1";
+      sessionStorage.setItem(HEAL_FLAG, "1");
+    } catch (e) {}
+
+    const msg = alreadyHealed
+      ? "<h2>Update needed</h2><p>This page is out of date and couldn't refresh " +
+        "itself. Hard-refresh with Ctrl+Shift+R, or clear the site's data.</p>"
+      : "<h2>Updating…</h2><p>Loading the latest version…</p>";
     document.body.innerHTML =
       '<div style="padding:24px;font:16px/1.5 system-ui,sans-serif;color:#eef3ff;' +
-      'background:#0b1b3a;min-height:100vh">' +
-      "<h2>Updating…</h2><p>Loading the latest version. If this message stays, " +
-      "hard-refresh with Ctrl+Shift+R (or clear site data).</p></div>";
+      'background:#0b1b3a;min-height:100vh">' + msg + "</div>";
+
+    if (alreadyHealed) return;
+
     Promise.all([
       navigator.serviceWorker
         ? navigator.serviceWorker
@@ -525,6 +554,10 @@ function boot() {
     ]).finally(() => setTimeout(() => location.reload(), 1200));
     return;
   }
+
+  try {
+    sessionStorage.removeItem(HEAL_FLAG);
+  } catch (e) {}
 
   wireEvents();
 
