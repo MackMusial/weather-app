@@ -44,12 +44,13 @@ function loadCalHistory() {
 
 const state = {
   location: CFG.DEFAULT_LOCATION || { name: "Toronto", latitude: 43.6532, longitude: -79.3832 },
-  dayOffset: 0, // 0 = today, 1 = tomorrow, ...
+  dayOffset: 0, // days the rolling 48h window is panned from "now" (DAY_MIN..DAY_MAX)
   unit: loadUnit(), // "celsius" | "fahrenheit"
   // the public calendar to show — remembered choice, else the config default
   calendarId: readLS(CAL_ID_KEY, CFG.CALENDAR_ID || ""),
   calHistory: loadCalHistory(), // recently entered calendar IDs
-  weather: null, // { "YYYY-MM-DDTHH:00": {temp, code, precip} }
+  weather: null, // { "YYYY-MM-DDTHH:00": {temp, code, precip, isDay} }
+  nowWx: null, // last-known conditions for the current hour (drives the background)
   aqi: null, // { value } — current US AQI for the location, or null if unavailable
   events: [], // normalized calendar events for the selected day
   calName: "", // display name of the calendar
@@ -76,16 +77,18 @@ const els = {
   airValue: document.getElementById("air-value"),
   airWord: document.getElementById("air-word"),
   airMarker: document.getElementById("air-marker"),
+  settingsBtn: document.getElementById("settings-btn"),
+  settingsPanel: document.getElementById("settings-panel"),
+  precip: document.getElementById("precip"),
 };
 
-/* ---------- date helpers ---------- */
+/* ---------- date + window helpers ---------- */
 
-function selectedDate() {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() + state.dayOffset);
-  return d;
-}
+// The grid is a rolling 48-hour window: 24 hours before "now" through 24 after,
+// pannable by whole days with the ‹ › nav (state.dayOffset, clamped -2..+6).
+const WINDOW_HOURS = 48;
+const DAY_MIN = -2;
+const DAY_MAX = 6;
 
 function ymd(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
@@ -97,16 +100,59 @@ function hourKey(d, hour) {
   return `${ymd(d)}T${String(hour).padStart(2, "0")}:00`;
 }
 
-function fmtHour(hour) {
+function dateForOffset(offset) {
   const d = new Date();
-  d.setHours(hour, 0, 0, 0);
-  return d.toLocaleTimeString([], { hour: "numeric", hour12: true });
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + offset);
+  return d;
 }
 
-function fmtDayLabel() {
-  if (state.dayOffset === 0) return "Today";
+// current time floored to the top of the hour
+function nowHour() {
+  const d = new Date();
+  d.setMinutes(0, 0, 0);
+  return d;
+}
+
+// first hour shown: 24h before now, shifted by the day-pan offset
+function windowStart() {
+  const d = nowHour();
+  d.setDate(d.getDate() + state.dayOffset);
+  d.setHours(d.getHours() - 24);
+  return d;
+}
+
+function windowEnd() {
+  const d = windowStart();
+  d.setHours(d.getHours() + WINDOW_HOURS);
+  return d;
+}
+
+// "Yesterday · Wed, Sep 3" style label for a date divider
+function relativeDayLabel(d) {
+  const base = new Date();
+  base.setHours(0, 0, 0, 0);
+  const day = new Date(d);
+  day.setHours(0, 0, 0, 0);
+  const diff = Math.round((day - base) / 86400000);
+  const rel = { "-1": "Yesterday", "0": "Today", "1": "Tomorrow" }[diff];
+  const dateStr = d.toLocaleDateString([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+  return rel ? `${rel} · ${dateStr}` : dateStr;
+}
+
+// short label for the nav, describing where the window sits
+function windowLabel() {
+  if (state.dayOffset === 0) return "Now";
+  if (state.dayOffset === -1) return "Yesterday";
   if (state.dayOffset === 1) return "Tomorrow";
-  return selectedDate().toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  return dateForOffset(state.dayOffset).toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+  });
 }
 
 function setStatus(msg) {
@@ -147,13 +193,16 @@ const WMO = {
 };
 
 async function loadWeather() {
-  const date = ymd(selectedDate());
+  const ws = windowStart();
+  const we = windowEnd();
+  const startDate = ymd(ws);
+  const endDate = ymd(we);
   const { latitude, longitude } = state.location;
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
-    `&hourly=temperature_2m,precipitation_probability,weather_code` +
+    `&hourly=temperature_2m,precipitation_probability,weather_code,is_day` +
     `&temperature_unit=${state.unit}` +
-    `&timezone=auto&start_date=${date}&end_date=${date}`;
+    `&timezone=auto&start_date=${startDate}&end_date=${endDate}`;
 
   setStatus(`Loading weather for ${state.location.name}…`);
 
@@ -187,9 +236,12 @@ async function loadWeather() {
       temp: h.temperature_2m[i],
       code: h.weather_code[i],
       precip: h.precipitation_probability ? h.precipitation_probability[i] : null,
+      isDay: h.is_day ? h.is_day[i] : null,
     };
   });
   state.weather = map;
+  const nowKey = hourKey(new Date(), new Date().getHours());
+  if (map[nowKey]) state.nowWx = map[nowKey]; // stash current conditions for the background
   state.tempUnit = data.hourly_units?.temperature_2m || "°C";
   setStatus("");
 }
@@ -405,14 +457,12 @@ async function loadEvents() {
   if (!state.calendarId) {
     state.events = [];
     state.calName = "";
-    state.calError = "Enter a public calendar above";
+    state.calError = "Add a calendar in ⚙ settings";
     return;
   }
 
-  const day = selectedDate();
-  const start = new Date(day);
-  const end = new Date(day);
-  end.setDate(end.getDate() + 1);
+  const start = windowStart();
+  const end = windowEnd();
 
   const url =
     `${CAL_API}/${encodeURIComponent(state.calendarId)}/events` +
@@ -452,15 +502,117 @@ function normalizeEvent(ev) {
     title: ev.summary || "(no title)",
     location: ev.location || "",
     allDay,
+    // "YYYY-MM-DD" bounds (end exclusive, per Google) for the all-day strip
+    allDayStart: allDay ? ev.start.date : "",
+    allDayEnd: allDay ? ev.end.date : "",
     startsAt,
     endsAt,
   };
 }
 
+/* ---------- reactive background ---------- */
+
+// WMO weather code -> a coarse "sky" the background reacts to
+function skyFromCode(code) {
+  if (code == null) return "clear";
+  if (code <= 1) return "clear";
+  if (code === 2 || code === 3) return "clouds";
+  if (code === 45 || code === 48) return "fog";
+  if (code >= 71 && code <= 77) return "snow";
+  if (code === 85 || code === 86) return "snow";
+  if (code >= 95) return "thunder";
+  if (code >= 51 && code <= 82) return "rain"; // drizzle / rain / showers
+  return "clouds";
+}
+
+function currentConditions() {
+  const now = new Date();
+  const w =
+    (state.weather && state.weather[hourKey(now, now.getHours())]) || state.nowWx;
+  const hour = now.getHours();
+  const isDay = w && w.isDay != null ? w.isDay === 1 : hour >= 7 && hour < 19;
+  return { sky: w ? skyFromCode(w.code) : "clear", isDay };
+}
+
+let skyKey = "";
+
+function applySky() {
+  const { sky, isDay } = currentConditions();
+  document.body.dataset.sky = sky;
+  document.body.dataset.day = isDay ? "day" : "night";
+
+  const key = `${sky}|${isDay ? "day" : "night"}`;
+  if (key === skyKey) return; // particle layer only rebuilds when the mood changes
+  skyKey = key;
+  buildPrecip(sky, isDay);
+}
+
+function reducedMotion() {
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch (e) {
+    return false;
+  }
+}
+
+function buildPrecip(sky, isDay) {
+  const layer = els.precip;
+  if (!layer) return;
+  layer.replaceChildren();
+  if (reducedMotion()) return;
+
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const add = (cls, styles) => {
+    const el = document.createElement("span");
+    el.className = cls;
+    for (const [k, v] of Object.entries(styles)) {
+      if (k.startsWith("--")) el.style.setProperty(k, v);
+      else el.style[k] = v;
+    }
+    layer.appendChild(el);
+  };
+
+  if (sky === "rain" || sky === "thunder") {
+    for (let i = 0; i < 90; i++) {
+      add("drop", {
+        left: `${rnd(0, 100)}%`,
+        height: `${rnd(12, 26)}px`,
+        opacity: `${rnd(0.2, 0.55)}`,
+        animationDuration: `${rnd(0.45, 0.9)}s`,
+        animationDelay: `${rnd(-2, 0)}s`,
+      });
+    }
+  } else if (sky === "snow") {
+    for (let i = 0; i < 55; i++) {
+      const s = rnd(3, 7);
+      add("flake", {
+        left: `${rnd(0, 100)}%`,
+        width: `${s}px`,
+        height: `${s}px`,
+        opacity: `${rnd(0.3, 0.85)}`,
+        animationDuration: `${rnd(6, 13)}s`,
+        animationDelay: `${rnd(-13, 0)}s`,
+        "--sway": `${rnd(8, 30)}px`,
+      });
+    }
+  } else if (sky === "clear" && !isDay) {
+    for (let i = 0; i < 44; i++) {
+      add("star", {
+        left: `${rnd(0, 100)}%`,
+        top: `${rnd(0, 92)}%`,
+        opacity: `${rnd(0.2, 0.9)}`,
+        animationDuration: `${rnd(2.5, 6)}s`,
+        animationDelay: `${rnd(-6, 0)}s`,
+      });
+    }
+  }
+}
+
 /* ---------- render ---------- */
 
 function render({ scroll = false } = {}) {
-  els.dateLabel.textContent = fmtDayLabel();
+  applySky();
+  els.dateLabel.textContent = windowLabel();
   els.location.textContent = state.location.name;
   els.unitToggle.dataset.unit = state.unit; // slides the thumb to the active side
   els.calName.textContent = state.calError || state.calName || "";
@@ -479,8 +631,11 @@ function render({ scroll = false } = {}) {
     })
   );
 
-  // all-day events
-  const allDay = state.events.filter((e) => e.allDay);
+  // all-day events covering the window-centre day
+  const centreYmd = ymd(dateForOffset(state.dayOffset));
+  const allDay = state.events.filter(
+    (e) => e.allDay && e.allDayStart <= centreYmd && centreYmd < e.allDayEnd
+  );
   if (allDay.length) {
     els.allday.hidden = false;
     els.allday.innerHTML = allDay
@@ -492,77 +647,104 @@ function render({ scroll = false } = {}) {
   }
 
   const now = new Date();
-  const isToday = state.dayOffset === 0;
-  const date = selectedDate();
-
   const timed = state.events.filter((e) => !e.allDay);
+  const ws = windowStart();
 
   const frag = document.createDocumentFragment();
-  for (let hour = 0; hour < 24; hour++) {
-    const li = document.createElement("li");
-    li.className = "row";
-    if (isToday && hour === now.getHours()) {
-      li.classList.add("now");
-      // horizontal line at the exact current minute within this hour row
-      const line = document.createElement("div");
-      line.className = "now-line";
-      line.style.top = `${(now.getMinutes() / 60) * 100}%`;
-      li.appendChild(line);
-    } else if (isToday && hour < now.getHours()) {
-      li.classList.add("past");
+  let lastDateKey = null;
+  for (let i = 0; i < WINDOW_HOURS; i++) {
+    const t = new Date(ws);
+    t.setHours(t.getHours() + i);
+
+    const dateKey = ymd(t);
+    if (dateKey !== lastDateKey) {
+      const divider = document.createElement("li");
+      divider.className = "day-divider";
+      divider.textContent = relativeDayLabel(t);
+      frag.appendChild(divider);
+      lastDateKey = dateKey;
     }
 
-    // time
-    const time = document.createElement("div");
-    time.className = "time";
-    time.textContent = fmtHour(hour);
-    li.appendChild(time);
-
-    // weather
-    const wx = document.createElement("div");
-    wx.className = "wx";
-    const w = state.weather ? state.weather[hourKey(date, hour)] : null;
-    if (w) {
-      const [icon, label] = WMO[w.code] || ["•", "—"];
-      const precip =
-        w.precip != null && w.precip > 0 ? ` · ${w.precip}%💧` : "";
-      wx.innerHTML =
-        `<span class="icon" title="${label}">${icon}</span>` +
-        `<span class="temp">${Math.round(w.temp)}${state.tempUnit || "°"}</span>` +
-        `<span class="meta">${label}${precip}</span>`;
-    } else {
-      wx.innerHTML = `<span class="empty">—</span>`;
-    }
-    li.appendChild(wx);
-
-    // calendar
-    const cal = document.createElement("div");
-    cal.className = "events";
-    const hits = timed.filter((e) => overlapsHour(e, date, hour));
-    if (hits.length) {
-      cal.innerHTML = hits
-        .map(
-          (e) =>
-            `<div class="event"><div>${escapeHtml(e.title)}</div>` +
-            `<div class="when">${fmtRange(e)}${
-              e.location ? " · " + escapeHtml(e.location) : ""
-            }</div></div>`
-        )
-        .join("");
-    } else {
-      cal.innerHTML = `<span class="empty">—</span>`;
-    }
-    li.appendChild(cal);
-
-    frag.appendChild(li);
+    frag.appendChild(buildHourRow(t, now, timed));
   }
 
   els.rows.replaceChildren(frag);
 
-  if (isToday && scroll) {
+  if (scroll) {
     const nowRow = els.rows.querySelector(".row.now");
-    if (nowRow) nowRow.scrollIntoView({ block: "center", behavior: "smooth" });
+    if (nowRow) {
+      nowRow.scrollIntoView({ block: "center", behavior: "smooth" });
+    } else {
+      // window doesn't contain "now" (panned far ahead/back) — show its start
+      els.rows.firstElementChild?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }
   }
+}
+
+function buildHourRow(t, now, timed) {
+  const hour = t.getHours();
+  const li = document.createElement("li");
+  li.className = "row";
+
+  const isNowHour =
+    t.getFullYear() === now.getFullYear() &&
+    t.getMonth() === now.getMonth() &&
+    t.getDate() === now.getDate() &&
+    hour === now.getHours();
+
+  if (isNowHour) {
+    li.classList.add("now");
+    // horizontal line at the exact current minute within this hour row
+    const line = document.createElement("div");
+    line.className = "now-line";
+    line.style.top = `${(now.getMinutes() / 60) * 100}%`;
+    li.appendChild(line);
+  } else if (t < now) {
+    li.classList.add("past");
+  }
+
+  // time
+  const time = document.createElement("div");
+  time.className = "time";
+  time.textContent = t.toLocaleTimeString([], { hour: "numeric" });
+  li.appendChild(time);
+
+  // weather
+  const wx = document.createElement("div");
+  wx.className = "wx";
+  const w = state.weather ? state.weather[hourKey(t, hour)] : null;
+  if (w) {
+    const [icon, label] = WMO[w.code] || ["•", "—"];
+    const precip = w.precip != null && w.precip > 0 ? ` · ${w.precip}%💧` : "";
+    wx.innerHTML =
+      `<span class="icon" title="${label}">${icon}</span>` +
+      `<span class="temp">${Math.round(w.temp)}${state.tempUnit || "°"}</span>` +
+      `<span class="meta">${label}${precip}</span>`;
+  } else {
+    wx.innerHTML = `<span class="empty">—</span>`;
+  }
+  li.appendChild(wx);
+
+  // calendar
+  const cal = document.createElement("div");
+  cal.className = "events";
+  const hits = timed.filter((e) => overlapsHour(e, t, hour));
+  if (hits.length) {
+    cal.innerHTML = hits
+      .map(
+        (e) =>
+          `<div class="event"><div>${escapeHtml(e.title)}</div>` +
+          `<div class="when">${fmtRange(e)}${
+            e.location ? " · " + escapeHtml(e.location) : ""
+          }</div></div>`
+      )
+      .join("");
+  } else {
+    cal.innerHTML = `<span class="empty">—</span>`;
+  }
+  li.appendChild(cal);
+
+  return li;
 }
 
 function renderAir() {
@@ -634,7 +816,35 @@ async function refresh() {
 
 /* ---------- events wiring ---------- */
 
+function setSettingsOpen(open) {
+  els.settingsPanel.hidden = !open;
+  els.settingsBtn.setAttribute("aria-expanded", String(open));
+  if (open) els.calInput.focus();
+}
+
 function wireEvents() {
+  els.settingsBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setSettingsOpen(els.settingsPanel.hidden);
+  });
+
+  // click-away and Escape close the settings dropdown
+  document.addEventListener("click", (e) => {
+    if (
+      !els.settingsPanel.hidden &&
+      !els.settingsPanel.contains(e.target) &&
+      e.target !== els.settingsBtn
+    ) {
+      setSettingsOpen(false);
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !els.settingsPanel.hidden) {
+      setSettingsOpen(false);
+      els.settingsBtn.focus();
+    }
+  });
+
   els.unitToggle.addEventListener("click", async (e) => {
     const opt = e.target.closest(".unit-opt");
     if (!opt || opt.dataset.unit === state.unit) return;
@@ -649,6 +859,7 @@ function wireEvents() {
     if (!id) return;
     rememberCalendar(id);
     els.calInput.blur();
+    setSettingsOpen(false);
     await refresh();
   });
 
@@ -687,14 +898,14 @@ function wireEvents() {
   });
 
   els.prevDay.addEventListener("click", async () => {
-    if (state.dayOffset > 0) {
+    if (state.dayOffset > DAY_MIN) {
       state.dayOffset--;
       await refresh();
     }
   });
 
   els.nextDay.addEventListener("click", async () => {
-    if (state.dayOffset < 6) {
+    if (state.dayOffset < DAY_MAX) {
       state.dayOffset++;
       await refresh();
     }

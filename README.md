@@ -15,14 +15,15 @@ Built for **403 Mobile App Dev**. Vanilla HTML/CSS/JS — no build step, no fram
 
 - **Hourly weather** from [Open-Meteo](https://open-meteo.com/) — free, no API key. Temperature, WMO condition (with icon), and precipitation chance for all 24 hours.
 - **Air quality** — current US AQI for the location from Open-Meteo's keyless air-quality API, shown in the header as the number, a plain-language word (Good / Moderate / Unhealthy / …), and a marker on a 0–300 colour scale. Fails silently (widget hides) if unavailable.
-- **Public Google Calendar** — type any public calendar's email/ID into the header box (recent ones are remembered in a dropdown). Events are read with an API key, no sign-in, and placed in every hour they overlap; all-day events show as chips.
+- **Public Google Calendar** — add a public calendar's email/ID in the **⚙ settings dropdown** (recent ones are remembered). Events are read with an API key, no sign-in, and placed in every hour they overlap; all-day events show as chips. The loaded calendar's name/status stays visible under the "Calendar" column header.
 - **°C / °F toggle** — sliding switch in the header; the choice is saved to `localStorage`.
 - **City search** (Open-Meteo geocoding) or **device geolocation** for the weather location. Add a state or country to disambiguate, with or without a comma — `Woodhaven MI`, `Paris, France`, `Springfield IL`. US-state and Canadian-province abbreviations are understood, as are ~60 country names; a bare name picks the most populous match.
-- **Day navigation** — today through +6 days (the forecast horizon).
-- **"Now" line** — a marker across the current hour's row at the exact minute; auto-refreshes weather + events every 10 min and advances the line every minute.
-- Current hour is highlighted and scrolled into view; past hours are dimmed.
+- **Rolling 48-hour window** — the grid always spans 24 hours *before* "now" through 24 hours *after*, as one continuous scroll split by date dividers, so late at night you scroll straight past midnight into the early hours (and back into the evening you just had). The window advances on its own as time passes.
+- **Day navigation** — the `‹ ›` nav pans the window a day at a time, from −2 days to +6 days (the forecast horizon); the centre label shows where you are ("Now", "Yesterday", "Sep 8", …).
+- **"Now" line** — a marker across the current hour's row at the exact minute; auto-refreshes weather + events every 10 min and advances the line every minute. The current hour is highlighted and scrolled to centre; past hours are dimmed.
 - **Resilient to API outages** — a slow or failing weather API can't block the calendar (they load in parallel), requests time out after 12 s, and a failed weather load retries every 90 s with a plain-language status instead of a raw error.
 - **Installable PWA** — add it to a phone home screen and it launches full-screen. Assumes internet connectivity for all data.
+- **Reactive animated background** — a slow-drifting blurred colour field behind the content that reacts to the current conditions and time of day: warm gold/amber by day when it's clear, cool blues with a twinkling starfield on a clear night, grey when overcast, falling rain streaks in rain, drifting flakes in snow, plus lightning flashes in a thunderstorm. Driven by the current hour's `weather_code` + Open-Meteo's `is_day`. Pure CSS animation; particles and flashes are skipped (only the palette shifts) under `prefers-reduced-motion`.
 
 ## Tech
 
@@ -102,8 +103,8 @@ DevTools → **Application** → **Clear site data**.
 
 | File | Purpose |
 |------|---------|
-| `index.html` | Header controls + 3-column grid |
-| `styles.css` | Mobile-first dark theme |
+| `index.html` | Header controls + ⚙ settings dropdown + 3-column grid |
+| `styles.css` | Mobile-first dark theme + animated background |
 | `app.js` | Weather fetch, air-quality fetch, calendar fetch, rendering, outage handling, self-heal |
 | `config.js` | API key, default calendar ID, default location |
 | `manifest.webmanifest` | PWA metadata (name, icons, standalone display) |
