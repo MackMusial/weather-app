@@ -1,6 +1,6 @@
 {
-  "name": "Weather + Calendar",
-  "short_name": "WeatherCal",
+  "name": "Weather App",
+  "short_name": "Weather",
   "description": "Hour-by-hour weather beside your Google Calendar for the day.",
   "start_url": ".",
   "scope": ".",
