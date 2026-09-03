@@ -1,10 +1,11 @@
 /* Minimal service worker.
- * The app assumes connectivity, so this only precaches the shell so the PWA
- * is installable and loads fast. API calls (weather, Google) always go to network.
+ * The app assumes connectivity, so this is network-FIRST for everything:
+ * the cache is only a fallback when a request fails offline. That keeps the
+ * app shell from ever going stale while online.
  */
-const CACHE = "weathercal-v2";
+const CACHE = "weathercal-v3";
 const SHELL = [
-  ".",
+  "./",
   "index.html",
   "styles.css",
   "app.js",
@@ -15,14 +16,21 @@ const SHELL = [
 ];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches
+      .open(CACHE)
+      // bypass the HTTP cache so a fresh install never stores stale files
+      .then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: "reload" }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener("activate", (e) => {
   e.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    caches
+      .keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
 });
 
@@ -31,16 +39,22 @@ self.addEventListener("fetch", (e) => {
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
-  // Never cache cross-origin (weather API, Google auth/api).
+  // Let cross-origin requests (weather API, Google Calendar) go straight to network.
   if (url.origin !== location.origin) return;
 
   e.respondWith(
     fetch(request)
       .then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(request, copy));
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(request, copy));
+        }
         return res;
       })
-      .catch(() => caches.match(request).then((r) => r || caches.match("index.html")))
+      .catch(() =>
+        caches
+          .match(request, { ignoreSearch: true })
+          .then((r) => r || caches.match("index.html"))
+      )
   );
 });

@@ -105,7 +105,7 @@ function fmtDayLabel() {
 }
 
 function setStatus(msg) {
-  els.status.textContent = msg || "";
+  if (els.status) els.status.textContent = msg || "";
 }
 
 /* ---------- weather (Open-Meteo) ---------- */
@@ -399,81 +399,115 @@ async function refresh() {
 
 /* ---------- events wiring ---------- */
 
-els.unitToggle.addEventListener("click", async (e) => {
-  const opt = e.target.closest(".unit-opt");
-  if (!opt || opt.dataset.unit === state.unit) return;
-  state.unit = opt.dataset.unit;
-  writeLS(UNIT_KEY, state.unit);
-  await refresh();
-});
-
-els.calForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const id = els.calInput.value.trim();
-  if (!id) return;
-  rememberCalendar(id);
-  els.calInput.blur();
-  await refresh();
-});
-
-els.cityForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const q = els.cityInput.value.trim();
-  if (!q) return;
-  setStatus("Searching…");
-  try {
-    state.location = await searchCity(q);
-    els.cityInput.value = "";
+function wireEvents() {
+  els.unitToggle.addEventListener("click", async (e) => {
+    const opt = e.target.closest(".unit-opt");
+    if (!opt || opt.dataset.unit === state.unit) return;
+    state.unit = opt.dataset.unit;
+    writeLS(UNIT_KEY, state.unit);
     await refresh();
-  } catch (err) {
-    setStatus(err.message);
-  }
-});
+  });
 
-els.geoBtn.addEventListener("click", () => {
-  if (!navigator.geolocation) {
-    setStatus("Geolocation not available.");
-    return;
-  }
-  setStatus("Getting your location…");
-  navigator.geolocation.getCurrentPosition(
-    async (pos) => {
-      state.location = {
-        name: "My location",
-        latitude: +pos.coords.latitude.toFixed(4),
-        longitude: +pos.coords.longitude.toFixed(4),
-      };
+  els.calForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const id = els.calInput.value.trim();
+    if (!id) return;
+    rememberCalendar(id);
+    els.calInput.blur();
+    await refresh();
+  });
+
+  els.cityForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const q = els.cityInput.value.trim();
+    if (!q) return;
+    setStatus("Searching…");
+    try {
+      state.location = await searchCity(q);
+      els.cityInput.value = "";
       await refresh();
-    },
-    (err) => setStatus(`Location denied: ${err.message}`),
-    { enableHighAccuracy: false, timeout: 10000 }
-  );
-});
+    } catch (err) {
+      setStatus(err.message);
+    }
+  });
 
-els.prevDay.addEventListener("click", async () => {
-  if (state.dayOffset > 0) {
-    state.dayOffset--;
-    await refresh();
-  }
-});
+  els.geoBtn.addEventListener("click", () => {
+    if (!navigator.geolocation) {
+      setStatus("Geolocation not available.");
+      return;
+    }
+    setStatus("Getting your location…");
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        state.location = {
+          name: "My location",
+          latitude: +pos.coords.latitude.toFixed(4),
+          longitude: +pos.coords.longitude.toFixed(4),
+        };
+        await refresh();
+      },
+      (err) => setStatus(`Location denied: ${err.message}`),
+      { enableHighAccuracy: false, timeout: 10000 }
+    );
+  });
 
-els.nextDay.addEventListener("click", async () => {
-  if (state.dayOffset < 6) {
-    state.dayOffset++;
-    await refresh();
-  }
-});
+  els.prevDay.addEventListener("click", async () => {
+    if (state.dayOffset > 0) {
+      state.dayOffset--;
+      await refresh();
+    }
+  });
 
-/* ---------- boot ---------- */
-
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch(() => {});
+  els.nextDay.addEventListener("click", async () => {
+    if (state.dayOffset < 6) {
+      state.dayOffset++;
+      await refresh();
+    }
   });
 }
 
-// Keep data fresh and the "now" line moving while the tab stays open.
-setInterval(refresh, REFRESH_MS);
-setInterval(() => render(), TICK_MS);
+/* ---------- boot ---------- */
 
-refresh();
+function boot() {
+  // Self-heal: if a stale cached index.html doesn't match this script, the
+  // elements it expects are missing. Wipe caches + SW and reload instead of
+  // running half-broken.
+  const missing = Object.entries(els)
+    .filter(([, node]) => !node)
+    .map(([key]) => key);
+  if (missing.length) {
+    console.error("Stale HTML/JS mismatch — missing elements:", missing);
+    document.body.innerHTML =
+      '<div style="padding:24px;font:16px/1.5 system-ui,sans-serif;color:#eef3ff;' +
+      'background:#0b1b3a;min-height:100vh">' +
+      "<h2>Updating…</h2><p>Loading the latest version. If this message stays, " +
+      "hard-refresh with Ctrl+Shift+R (or clear site data).</p></div>";
+    Promise.all([
+      navigator.serviceWorker
+        ? navigator.serviceWorker
+            .getRegistrations()
+            .then((rs) => Promise.all(rs.map((r) => r.unregister())))
+        : null,
+      window.caches
+        ? caches.keys().then((ks) => Promise.all(ks.map((k) => caches.delete(k))))
+        : null,
+    ]).finally(() => setTimeout(() => location.reload(), 1200));
+    return;
+  }
+
+  wireEvents();
+
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("sw.js").catch(() => {});
+    });
+  }
+
+  // Keep data fresh and the "now" line moving while the tab stays open.
+  setInterval(refresh, REFRESH_MS);
+  setInterval(() => render(), TICK_MS);
+
+  refresh();
+}
+
+boot();
