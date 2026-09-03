@@ -18,9 +18,9 @@ Built for **403 Mobile App Dev**. Vanilla HTML/CSS/JS — no build step, no fram
 - **Public Google Calendar** — type any public calendar's email/ID into the header box (recent ones are remembered in a dropdown). Events are read with an API key, no sign-in, and placed in every hour they overlap; all-day events show as chips.
 - **°C / °F toggle** — sliding switch in the header; the choice is saved to `localStorage`.
 - **City search** (Open-Meteo geocoding) or **device geolocation** for the weather location. Add a state or country to disambiguate, with or without a comma — `Woodhaven MI`, `Paris, France`, `Springfield IL`. US-state and Canadian-province abbreviations are understood, as are ~60 country names; a bare name picks the most populous match.
-- **Day navigation** — today through +6 days (the forecast horizon).
-- **"Now" line** — a marker across the current hour's row at the exact minute; auto-refreshes weather + events every 10 min and advances the line every minute.
-- Current hour is highlighted and scrolled into view; past hours are dimmed.
+- **Rolling 48-hour window** — the grid always spans 24 hours *before* "now" through 24 hours *after*, as one continuous scroll split by date dividers, so late at night you scroll straight past midnight into the early hours (and back into the evening you just had). The window advances on its own as time passes.
+- **Day navigation** — the `‹ ›` nav pans the window a day at a time, from −2 days to +6 days (the forecast horizon); the centre label shows where you are ("Now", "Yesterday", "Sep 8", …).
+- **"Now" line** — a marker across the current hour's row at the exact minute; auto-refreshes weather + events every 10 min and advances the line every minute. The current hour is highlighted and scrolled to centre; past hours are dimmed.
 - **Resilient to API outages** — a slow or failing weather API can't block the calendar (they load in parallel), requests time out after 12 s, and a failed weather load retries every 90 s with a plain-language status instead of a raw error.
 - **Installable PWA** — add it to a phone home screen and it launches full-screen. Assumes internet connectivity for all data.
 
