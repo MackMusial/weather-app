@@ -2,7 +2,7 @@
  * The app assumes connectivity, so this only precaches the shell so the PWA
  * is installable and loads fast. API calls (weather, Google) always go to network.
  */
-const CACHE = "weathercal-v1";
+const CACHE = "weathercal-v2";
 const SHELL = [
   ".",
   "index.html",
