@@ -221,6 +221,49 @@ const COUNTRY_ALIAS = {
   uae: "united arab emirates", "south korea": "south korea",
 };
 
+// full country names people might tack on without a comma ("Paris France")
+const COUNTRIES = [
+  "united states", "canada", "mexico", "united kingdom", "ireland", "france",
+  "germany", "spain", "portugal", "italy", "netherlands", "belgium",
+  "switzerland", "austria", "poland", "sweden", "norway", "denmark", "finland",
+  "iceland", "greece", "turkey", "russia", "ukraine", "czechia", "hungary",
+  "romania", "croatia", "serbia", "china", "japan", "south korea",
+  "north korea", "india", "pakistan", "bangladesh", "thailand", "vietnam",
+  "philippines", "indonesia", "malaysia", "singapore", "australia",
+  "new zealand", "brazil", "argentina", "chile", "colombia", "peru", "egypt",
+  "morocco", "nigeria", "kenya", "south africa", "ghana", "israel",
+  "saudi arabia", "united arab emirates", "qatar", "scotland", "wales",
+];
+
+// every phrase that may legitimately trail a place name as a state/country hint
+const KNOWN_QUALIFIERS = new Set([
+  ...Object.keys(REGION_ABBR),
+  ...Object.values(REGION_ABBR),
+  ...Object.keys(COUNTRY_ALIAS),
+  ...Object.values(COUNTRY_ALIAS),
+  ...COUNTRIES,
+]);
+
+// "Woodhaven, MI" or "Woodhaven MI" -> { name: "Woodhaven", quals: ["mi"] }
+function parseCityQuery(query) {
+  const q = query.trim();
+
+  if (q.includes(",")) {
+    const parts = q.split(",").map((s) => s.trim()).filter(Boolean);
+    return { name: parts[0] || q, quals: parts.slice(1).map((s) => s.toLowerCase()) };
+  }
+
+  // no comma: peel a trailing 1–3 word qualifier only if we recognise it
+  const words = q.split(/\s+/);
+  for (let take = Math.min(3, words.length - 1); take >= 1; take--) {
+    const tail = words.slice(-take).join(" ").toLowerCase();
+    if (KNOWN_QUALIFIERS.has(tail)) {
+      return { name: words.slice(0, -take).join(" "), quals: [tail] };
+    }
+  }
+  return { name: q, quals: [] };
+}
+
 // lowercase place-strings a result can be matched against
 function locTokens(r) {
   const t = [];
@@ -252,10 +295,7 @@ function matchesQualifiers(r, quals) {
 }
 
 async function searchCity(query) {
-  // "Woodhaven, MI" -> name "woodhaven", qualifiers ["mi"]
-  const parts = query.split(",").map((s) => s.trim()).filter(Boolean);
-  const name = parts[0] || query.trim();
-  const quals = parts.slice(1).map((s) => s.toLowerCase());
+  const { name, quals } = parseCityQuery(query);
 
   const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
     name

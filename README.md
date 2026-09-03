@@ -17,7 +17,7 @@ Built for **403 Mobile App Dev**. Vanilla HTML/CSS/JS — no build step, no fram
 - **Air quality** — current US AQI for the location from Open-Meteo's keyless air-quality API, shown in the header as the number, a plain-language word (Good / Moderate / Unhealthy / …), and a marker on a 0–300 colour scale. Fails silently (widget hides) if unavailable.
 - **Public Google Calendar** — type any public calendar's email/ID into the header box (recent ones are remembered in a dropdown). Events are read with an API key, no sign-in, and placed in every hour they overlap; all-day events show as chips.
 - **°C / °F toggle** — sliding switch in the header; the choice is saved to `localStorage`.
-- **City search** (Open-Meteo geocoding) or **device geolocation** for the weather location. Add a state or country to disambiguate — `Woodhaven, MI`, `Paris, France`, `Springfield, IL` — US-state and Canadian-province abbreviations are understood; a bare name picks the most populous match.
+- **City search** (Open-Meteo geocoding) or **device geolocation** for the weather location. Add a state or country to disambiguate, with or without a comma — `Woodhaven MI`, `Paris, France`, `Springfield IL`. US-state and Canadian-province abbreviations are understood, as are ~60 country names; a bare name picks the most populous match.
 - **Day navigation** — today through +6 days (the forecast horizon).
 - **"Now" line** — a marker across the current hour's row at the exact minute; auto-refreshes weather + events every 10 min and advances the line every minute.
 - Current hour is highlighted and scrolled into view; past hours are dimmed.
